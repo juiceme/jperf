@@ -25,7 +25,7 @@ void do_server(void)
 {
     int sock=0;
     int ret =0;
-    int sa_len = 0;
+    unsigned int sa_len = 0;
     struct sockaddr_in addr = {0};
     struct sockaddr_in client = {0};
 
@@ -64,14 +64,14 @@ void do_client(struct addrinfo *info)
     int count=0;
     int sock =0;
     int ret=0;
-    int sa_len=0;
+    unsigned int sa_len=0;
     struct sockaddr_in server = {0};
     struct timespec start, stop;
 
     printf("\nStarting test against %s on port %d \n",
 	   inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
     if((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1) {
-	printf("Cannot create socket, err: %s\n", sock, strerror(errno));
+	printf("Cannot create socket, err: %s\n", strerror(errno));
 	return;
     }
     server.sin_family = AF_INET;
@@ -101,7 +101,6 @@ int main(int argc, char **argv)
 {
     int i=0;
     int mode=0;
-    int res = 0;
     char port[10];
     struct addrinfo hints = {0};
     struct addrinfo *info = NULL;
