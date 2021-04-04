@@ -10,7 +10,7 @@
 #include <time.h>
 
 #define TEST_PORT  5555
-#define MAX_PACKET 5000
+#define MAX_PACKET 70000
 
 char buffer[MAX_PACKET] = {0};
 
@@ -64,6 +64,20 @@ int interval(struct timespec start, struct timespec stop)
     return s * 1000 + round(ns / 1000000);
 }
 
+char p_buf[80];
+
+char *bandwidth(struct timespec start, struct timespec stop, int len)
+{
+    float duration = (float)(interval(start, stop) / 1000.0);
+    int header = (round(len / 1500) + 1) * (22 + 42);
+    float raw = (float)((header + len) * 80) / duration / 1000.0;
+    float eff = (float)(len * 80) / duration / 1000.0;
+
+    // raw frame contains 22 byte ethernet header + 42 byte udp header + payload
+    snprintf(p_buf, sizeof(p_buf), " Raw: %-8.2fMbit/s, Effective: %-8.2fMbit/s", raw, eff);
+    return p_buf;
+}
+
 void do_client(struct addrinfo *info)
 {
     int len = 0;
@@ -84,9 +98,14 @@ void do_client(struct addrinfo *info)
     server.sin_family = AF_INET;
     server.sin_port = htons(TEST_PORT);
     server.sin_addr.s_addr = INADDR_ANY;
+
     for (len = 1; len < MAX_PACKET; len = 2 * len)
     {
-        printf("  Sending packets, len:%d ... ", len);
+        if (len > 65507)
+        {
+            len = 65507;
+        }
+        printf("  Sending packets, length:%d ... \t", len);
         fflush(stdout);
         clock_gettime(CLOCK_REALTIME, &start);
         for (count = 0; count < 10000; count++)
@@ -105,7 +124,7 @@ void do_client(struct addrinfo *info)
             }
         }
         clock_gettime(CLOCK_REALTIME, &stop);
-        printf(" time: %dms\n", interval(start, stop));
+        printf("%s\n", bandwidth(start, stop, len));
     }
 }
 
