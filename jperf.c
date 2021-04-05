@@ -17,14 +17,40 @@ char buffer[MAX_PACKET] = {0};
 void usage(void)
 {
     printf("\nUsage:\n");
-    printf("  jperf --server\n");
-    printf("  jperf --client <ip_address>\n\n");
+    printf("  jperf --server [-v]\n");
+    printf("  jperf --client <ip_address> [-v]\n\n");
 }
 
-void do_server(void)
+void spinner(int *count)
+{
+    if(*count==400)
+    {
+	printf("\b-");
+	fflush(stdout);
+    }
+    if(*count==800)
+    {
+	printf("\b\\");
+	fflush(stdout);
+    }
+    if(*count==1200)
+    {
+	printf("\b|");
+	fflush(stdout);
+    }
+    if(*count==1600)
+    {
+	*count=0;
+	printf("\b/");
+	fflush(stdout);
+    }
+}
+
+void do_server(int verbose)
 {
     int sock = 0;
     int ret = 0;
+    int spinner_count=0;
     unsigned int sa_len = 0;
     struct sockaddr_in addr = {0};
     struct sockaddr_in client = {0};
@@ -43,12 +69,18 @@ void do_server(void)
         printf("Cannot bind socket, err: %s\n", strerror(errno));
         return;
     }
+    printf(" ");
     while (1)
     {
         ret = recvfrom(sock, buffer, sizeof(buffer), MSG_WAITALL,
                        (struct sockaddr *) &client, &sa_len);
         sendto(sock, buffer, ret, MSG_CONFIRM,
                (const struct sockaddr *) &client, sa_len);
+	spinner_count++;
+	if(verbose)
+	{
+	    spinner(&spinner_count);
+	}
     }
 }
 
@@ -78,12 +110,13 @@ char *bandwidth(struct timespec start, struct timespec stop, int len)
     return p_buf;
 }
 
-void do_client(struct addrinfo *info)
+void do_client(struct addrinfo *info, int verbose)
 {
     int len = 0;
     int count = 0;
     int sock = 0;
     int ret = 0;
+    int spinner_count=0;
     unsigned int sa_len = 0;
     struct sockaddr_in server = {0};
     struct timespec start, stop;
@@ -122,9 +155,14 @@ void do_client(struct addrinfo *info)
                 printf("length mismatch, sent %d -> received %d\n", len, ret);
                 return;
             }
-        }
+	    spinner_count++;
+	    if(verbose)
+	    {
+		spinner(&spinner_count);
+	    }
+	}
         clock_gettime(CLOCK_REALTIME, &stop);
-        printf("%s\n", bandwidth(start, stop, len));
+        printf("\b %s\n", bandwidth(start, stop, len));
     }
 }
 
@@ -132,6 +170,7 @@ int main(int argc, char **argv)
 {
     int i = 0;
     int mode = 0;
+    int verbose=0;
     char port[10];
     struct addrinfo hints = {0};
     struct addrinfo *info = NULL;
@@ -144,10 +183,13 @@ int main(int argc, char **argv)
 
     for (i = 0; i < argc; i++)
     {
+        if (strncmp(argv[i], "-v", 2) == 0)
+	{
+	    verbose=1;
+	}
         if (strncmp(argv[i], "--server", 8) == 0)
         {
             mode = 1;
-            break;
         }
         if (strncmp(argv[i], "--client", 8) == 0)
         {
@@ -172,11 +214,11 @@ int main(int argc, char **argv)
     }
     else if (mode == 1)
     {
-        do_server();
+        do_server(verbose);
     }
     else
     {
-        do_client(info);
+        do_client(info, verbose);
     }
 
     return 0;
