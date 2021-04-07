@@ -34,7 +34,7 @@ void usage(void)
 {
     printf("\nUsage:\n");
     printf("  jperf --server [-v]\n");
-    printf("  jperf --client <ip_address> [--flood] [--over_mtu] [--burst <packets>] [-v]\n\n");
+    printf("  jperf --client <ip_address> [--flood] [--over_mtu] [--burst <packets>] [--single-size <size>] [-v]\n\n");
     printf("        Default max sweep size is ip/udp mtu, max sweep size is 65507 bytes\n");
     printf("        Default packet burst is 1000\n\n");
 }
@@ -215,7 +215,7 @@ void print_header(void)
     printf("----------------------------------------------------------------------------------\n");
 }
 
-void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
+void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t single_size, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -223,6 +223,8 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t bur
     uint32_t ret = 0;
     uint32_t spinner_count = 0;
     uint32_t sa_len = 0;
+    uint32_t loop_start = 0;
+    uint32_t loop_end = 0;
     struct sockaddr_in server = {0};
     struct timespec start, stop;
 
@@ -238,7 +240,18 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t bur
     server.sin_port = htons(TEST_PORT);
     server.sin_addr.s_addr = INADDR_ANY;
 
-    for (len = 1; len < MAX_PACKET; len = 2 * len)
+    if (single_size == 0)
+    {
+        loop_start = 1;
+        loop_end = MAX_PACKET;
+    }
+    else
+    {
+        loop_start = single_size;
+        loop_end =  single_size + 1;
+    }
+
+    for (len = loop_start; len < loop_end; len = 2 * len)
     {
         if (len > max_packet)
         {
@@ -288,7 +301,7 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t bur
     }
 }
 
-void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
+void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t single_size, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -296,6 +309,8 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
     uint32_t ret = 0;
     uint32_t spinner_count = 0;
     uint32_t sa_len = 0;
+    uint32_t loop_start = 0;
+    uint32_t loop_end = 0;
     struct sockaddr_in server = {0};
     struct timespec start, stop;
 
@@ -311,7 +326,18 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
     server.sin_port = htons(TEST_PORT);
     server.sin_addr.s_addr = INADDR_ANY;
 
-    for (len = 1; len < MAX_PACKET; len = 2 * len)
+    if (single_size == 0)
+    {
+        loop_start = 1;
+        loop_end = MAX_PACKET;
+    }
+    else
+    {
+        loop_start = single_size;
+        loop_end =  single_size + 1;
+    }
+
+    for (len = loop_start; len < loop_end; len = 2 * len)
     {
         if (len > max_packet)
         {
@@ -364,13 +390,15 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
     }
 }
 
-void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
+void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t single_size, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
     uint32_t ret = 0;
     uint32_t spinner_count = 0;
     uint32_t sa_len = 0;
+    uint32_t loop_start = 0;
+    uint32_t loop_end = 0;
     struct sockaddr_in server = {0};
     struct timespec start, stop;
 
@@ -386,7 +414,18 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_
     server.sin_port = htons(TEST_PORT);
     server.sin_addr.s_addr = INADDR_ANY;
 
-    for (len = 1; len < MAX_PACKET; len = 2 * len)
+    if (single_size == 0)
+    {
+        loop_start = 1;
+        loop_end = MAX_PACKET;
+    }
+    else
+    {
+        loop_start = single_size;
+        loop_end =  single_size + 1;
+    }
+
+    for (len = loop_start; len < loop_end; len = 2 * len)
     {
         if (len > max_packet)
         {
@@ -441,6 +480,7 @@ int main(int argc, char **argv)
     uint32_t mode = 0;
     uint32_t max_packet = UDP_MTULEN;
     uint32_t burst = PACKET_COUNT;
+    uint32_t single_size = 0;
     uint32_t verbose = 0;
     char port[10];
     struct addrinfo hints = {0};
@@ -504,6 +544,22 @@ int main(int argc, char **argv)
                 break;
             }
         }
+        if (strncmp(argv[i], "--single-size", 13) == 0)
+        {
+            if ((i + 1) < argc)
+            {
+                if ((single_size = strtoul(argv[i + 1], NULL, 0)) == 0)
+                {
+                    mode = 0;
+                    break;
+                }
+            }
+            else
+            {
+                mode = 0;
+                break;
+            }
+        }
     }
 
     if (mode == 0)
@@ -516,12 +572,12 @@ int main(int argc, char **argv)
     }
     else if (mode == 2)
     {
-        do_client_pingpong(info, max_packet, burst, verbose);
+        do_client_pingpong(info, max_packet, burst, single_size, verbose);
     }
     else
     {
-        do_client_forward_flood(info, max_packet, burst, verbose);
-        do_client_reverse_flood(info, max_packet, burst, verbose);
+        do_client_forward_flood(info, max_packet, burst, single_size, verbose);
+        do_client_reverse_flood(info, max_packet, burst, single_size, verbose);
     }
     return 0;
 }
