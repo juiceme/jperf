@@ -36,22 +36,22 @@ void usage(void)
 
 void spinner(uint32_t *count)
 {
-    if (*count == 400)
+    if (*count == 100)
     {
         printf("\b-");
         fflush(stdout);
     }
-    if (*count == 800)
+    if (*count == 200)
     {
         printf("\b\\");
         fflush(stdout);
     }
-    if (*count == 1200)
+    if (*count == 300)
     {
         printf("\b|");
         fflush(stdout);
     }
-    if (*count == 1600)
+    if (*count == 400)
     {
         *count = 0;
         printf("\b/");
@@ -270,7 +270,7 @@ void do_client_pingpong(struct addrinfo *info, uint32_t verbose)
     }
 }
 
-void do_client_flood(struct addrinfo *info, uint32_t verbose)
+void do_client_forward_flood(struct addrinfo *info, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -337,6 +337,36 @@ void do_client_flood(struct addrinfo *info, uint32_t verbose)
             }
         }
         printf("\b %s\n", bandwidth(start, stop, len));
+    }
+}
+
+void do_client_reverse_flood(struct addrinfo *info, uint32_t verbose)
+{
+    int sock = 0;
+    uint32_t len = 0;
+    uint32_t ret = 0;
+    uint32_t spinner_count = 0;
+    uint32_t sa_len = 0;
+    struct sockaddr_in server = {0};
+    struct timespec start, stop;
+
+    printf("\nStarting test against %s on port %d \n",
+           inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
+    if ((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1)
+    {
+        printf("Cannot create socket, err: %s\n", strerror(errno));
+        return;
+    }
+    server.sin_family = AF_INET;
+    server.sin_port = htons(TEST_PORT);
+    server.sin_addr.s_addr = INADDR_ANY;
+
+    for (len = 1; len < MAX_PACKET; len = 2 * len)
+    {
+        if (len > 65507)
+        {
+            len = 65507;
+        }
         printf("  Receiving packets, length:%d ... \t", len);
         fflush(stdout);
 
@@ -438,7 +468,8 @@ int main(int argc, char **argv)
     }
     else
     {
-        do_client_flood(info, verbose);
+        do_client_forward_flood(info, verbose);
+        do_client_reverse_flood(info, verbose);
     }
     return 0;
 }
