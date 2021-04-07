@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
@@ -33,7 +34,9 @@ void usage(void)
 {
     printf("\nUsage:\n");
     printf("  jperf --server [-v]\n");
-    printf("  jperf --client <ip_address> [--flood] [--over_mtu] [-v]\n\n");
+    printf("  jperf --client <ip_address> [--flood] [--over_mtu] [--burst <packets>] [-v]\n\n");
+    printf("        Default max sweep size is ip/udp mtu, max sweep size is 65507 bytes\n");
+    printf("        Default packet burst is 1000\n\n");
 }
 
 void spinner(uint32_t *count)
@@ -179,7 +182,7 @@ void do_server(uint32_t verbose)
     }
 }
 
-uint32_t interval(struct timespec start, struct timespec stop)
+int interval(struct timespec start, struct timespec stop)
 {
     int s = stop.tv_sec - start.tv_sec;
     int ns = stop.tv_nsec - start.tv_nsec;
@@ -193,19 +196,26 @@ uint32_t interval(struct timespec start, struct timespec stop)
 
 char p_buf[80];
 
-char *bandwidth(struct timespec start, struct timespec stop, uint32_t len)
+char *bandwidth(struct timespec start, struct timespec stop, uint32_t len, uint32_t burst)
 {
     float duration = (float)(interval(start, stop) / 1000.0);
     uint32_t header = (round(len / 1500) + 1) * (22 + 42);
-    float raw = (float)((header + len) * 8) / duration / 1000.0;
-    float eff = (float)(len * 8) / duration / 1000.0;
+    float bytes = (float)(len * burst);
+    float raw_bw = (float)((header + bytes) * 8) / duration / 1000000.0;
+    float eff_bw = (float)(bytes * 8) / duration / 1000000.0;
 
     // raw frame contains 22 byte ethernet header + 42 byte udp header + payload
-    snprintf(p_buf, sizeof(p_buf), " Raw: %-8.2fMbit/s, Effective: %-8.2fMbit/s", raw, eff);
+    snprintf(p_buf, sizeof(p_buf), " %-8.2f       %-8.2f        %-3.2f", raw_bw, eff_bw, duration);
     return p_buf;
 }
 
-void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
+void print_header(void)
+{
+    printf("                                        Raw BW [Mb/s]  Eff. BW [Mb/s]  time [s]\n");
+    printf("----------------------------------------------------------------------------------\n");
+}
+
+void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -218,6 +228,7 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t ver
 
     printf("\nStarting test against %s on port %d \n",
            inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
+    print_header();
     if ((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1)
     {
         printf("Cannot create socket, err: %s\n", strerror(errno));
@@ -229,10 +240,10 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t ver
 
     for (len = 1; len < MAX_PACKET; len = 2 * len)
     {
-	if (len > max_packet)
-	{
-	    len=max_packet;
-	}
+        if (len > max_packet)
+        {
+            len = max_packet;
+        }
         printf("  Sending packets, length:%d ... \t", len);
         fflush(stdout);
 
@@ -247,7 +258,7 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t ver
 
         memset(buffer, 0, sizeof(struct command_header));
         clock_gettime(CLOCK_REALTIME, &start);
-        for (count = 0; count < PACKET_COUNT; count++)
+        for (count = 0; count < burst; count++)
         {
             if (sendto(sock, buffer, len, 0, info->ai_addr, info->ai_addrlen) == -1)
             {
@@ -268,16 +279,16 @@ void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t ver
             }
         }
         clock_gettime(CLOCK_REALTIME, &stop);
-        printf("\b %s\n", bandwidth(start, stop, len));
+        printf("\b %s\n", bandwidth(start, stop, len, burst));
 
-	if (len == max_packet)
-	{
-	    break;
-	}
+        if (len == max_packet)
+        {
+            break;
+        }
     }
 }
 
-void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
+void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -290,6 +301,7 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
 
     printf("\nStarting test against %s on port %d \n",
            inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
+    print_header();
     if ((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1)
     {
         printf("Cannot create socket, err: %s\n", strerror(errno));
@@ -320,7 +332,7 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
 
         memset(buffer, 0, sizeof(struct command_header));
         clock_gettime(CLOCK_REALTIME, &start);
-        for (count = 0; count < PACKET_COUNT; count++)
+        for (count = 0; count < burst; count++)
         {
             if (sendto(sock, buffer, len, 0, info->ai_addr, info->ai_addrlen) == -1)
             {
@@ -343,16 +355,16 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_
                 clock_gettime(CLOCK_REALTIME, &stop);
             }
         }
-        printf("\b %s\n", bandwidth(start, stop, len));
+        printf("\b %s\n", bandwidth(start, stop, len, burst));
 
-	if (len == max_packet)
-	{
-	    break;
-	}
+        if (len == max_packet)
+        {
+            break;
+        }
     }
 }
 
-void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
+void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_t burst, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -364,6 +376,7 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_
 
     printf("\nStarting test against %s on port %d \n",
            inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
+    print_header();
     if ((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1)
     {
         printf("Cannot create socket, err: %s\n", strerror(errno));
@@ -384,7 +397,7 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_
 
         memset(buffer, 0, sizeof(struct command_header));
         ((struct command_header *) buffer)->mode = htonl(FLOOD_OUT);
-        ((struct command_header *) buffer)->count = htonl(PACKET_COUNT);
+        ((struct command_header *) buffer)->count = htonl(burst);
         ((struct command_header *) buffer)->size = htonl(len);
         if (sendto(sock, buffer, sizeof(struct command_header), 0,
                    info->ai_addr, info->ai_addrlen) == -1)
@@ -413,12 +426,12 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_
             }
         }
         clock_gettime(CLOCK_REALTIME, &stop);
-        printf("\b %s\n", bandwidth(start, stop, len));
+        printf("\b %s\n", bandwidth(start, stop, len, burst));
 
-	if (len == max_packet)
-	{
-	    break;
-	}
+        if (len == max_packet)
+        {
+            break;
+        }
     }
 }
 
@@ -427,6 +440,7 @@ int main(int argc, char **argv)
     int i = 0;
     uint32_t mode = 0;
     uint32_t max_packet = UDP_MTULEN;
+    uint32_t burst = PACKET_COUNT;
     uint32_t verbose = 0;
     char port[10];
     struct addrinfo hints = {0};
@@ -472,8 +486,24 @@ int main(int argc, char **argv)
         }
         if (strncmp(argv[i], "--over-mtu", 10) == 0)
         {
-	    max_packet=UDP_MAXLEN;
-	}
+            max_packet = UDP_MAXLEN;
+        }
+        if (strncmp(argv[i], "--burst", 7) == 0)
+        {
+            if ((i + 1) < argc)
+            {
+                if ((burst = strtoul(argv[i + 1], NULL, 0)) == 0)
+                {
+                    mode = 0;
+                    break;
+                }
+            }
+            else
+            {
+                mode = 0;
+                break;
+            }
+        }
     }
 
     if (mode == 0)
@@ -486,12 +516,12 @@ int main(int argc, char **argv)
     }
     else if (mode == 2)
     {
-        do_client_pingpong(info, max_packet, verbose);
+        do_client_pingpong(info, max_packet, burst, verbose);
     }
     else
     {
-        do_client_forward_flood(info, max_packet, verbose);
-        do_client_reverse_flood(info, max_packet, verbose);
+        do_client_forward_flood(info, max_packet, burst, verbose);
+        do_client_reverse_flood(info, max_packet, burst, verbose);
     }
     return 0;
 }
