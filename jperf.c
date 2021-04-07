@@ -120,8 +120,11 @@ void do_server(uint32_t verbose)
         {
             printf("\b. ");
             fflush(stdout);
-            ret = recvfrom(sock, buffer, sizeof(buffer), MSG_WAITALL,
-                           (struct sockaddr *) &client, &sa_len);
+            if (mode != FLOOD_OUT)
+            {
+                ret = recvfrom(sock, buffer, sizeof(buffer), MSG_WAITALL,
+                               (struct sockaddr *) &client, &sa_len);
+            }
             restart = 0;
         }
         switch (mode)
@@ -136,14 +139,32 @@ void do_server(uint32_t verbose)
                 packet_count++;
                 if (packet_count == count)
                 {
+                    memset(buffer, 0, sizeof(struct command_header));
                     ((struct command_header *) buffer)->mode = htonl(FLOOD_IN);
                     ((struct command_header *) buffer)->confirm = htonl(CONFIRM);
                     sendto(sock, buffer, sizeof(struct command_header), MSG_CONFIRM,
                            (const struct sockaddr *) &client, sa_len);
+                    mode = 0;
                 }
                 break;
             case FLOOD_OUT:
-                printf("[%d] ", size);
+                memset(buffer, 0, sizeof(struct command_header));
+                for (packet_count = 0; packet_count < count; packet_count++)
+                {
+                    sendto(sock, buffer, size, MSG_CONFIRM,
+                           (const struct sockaddr *) &client, sa_len);
+                    spinner_count++;
+                    if (verbose)
+                    {
+                        spinner(&spinner_count);
+                    }
+                }
+                memset(buffer, 0, sizeof(struct command_header));
+                ((struct command_header *) buffer)->mode = htonl(FLOOD_OUT);
+                ((struct command_header *) buffer)->confirm = htonl(CONFIRM);
+                sendto(sock, buffer, sizeof(struct command_header), MSG_CONFIRM,
+                       (const struct sockaddr *) &client, sa_len);
+                mode = 0;
                 break;
             default:
                 break;
@@ -182,7 +203,7 @@ char *bandwidth(struct timespec start, struct timespec stop, uint32_t len)
     return p_buf;
 }
 
-void do_client(struct addrinfo *info, uint32_t verbose, uint32_t flood)
+void do_client_pingpong(struct addrinfo *info, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -213,15 +234,116 @@ void do_client(struct addrinfo *info, uint32_t verbose, uint32_t flood)
         printf("  Sending packets, length:%d ... \t", len);
         fflush(stdout);
 
-        if (flood == 0)
+        memset(buffer, 0, sizeof(struct command_header));
+        ((struct command_header *) buffer)->mode = htonl(PINGPONG);
+        if (sendto(sock, buffer, sizeof(struct command_header), 0,
+                   info->ai_addr, info->ai_addrlen) == -1)
         {
-            ((struct command_header *) buffer)->mode = htonl(PINGPONG);
+            printf("Cannot send data, err: %s\n", strerror(errno));
+            return;
         }
-        else
+
+        memset(buffer, 0, sizeof(struct command_header));
+        clock_gettime(CLOCK_REALTIME, &start);
+        for (count = 0; count < PACKET_COUNT; count++)
         {
-            ((struct command_header *) buffer)->mode = htonl(FLOOD_IN);
-            ((struct command_header *) buffer)->count = htonl(PACKET_COUNT);
+            if (sendto(sock, buffer, len, 0, info->ai_addr, info->ai_addrlen) == -1)
+            {
+                printf("Cannot send data, err: %s\n", strerror(errno));
+                return;
+            }
+            ret = recvfrom(sock, buffer, sizeof(buffer),
+                           MSG_WAITALL, (struct sockaddr *) &server, &sa_len);
+            if (ret != len)
+            {
+                printf("length mismatch, sent %d -> received %d\n", len, ret);
+                return;
+            }
+            spinner_count++;
+            if (verbose)
+            {
+                spinner(&spinner_count);
+            }
         }
+        clock_gettime(CLOCK_REALTIME, &stop);
+        printf("\b %s\n", bandwidth(start, stop, len));
+    }
+}
+
+void do_client_flood(struct addrinfo *info, uint32_t verbose)
+{
+    int sock = 0;
+    uint32_t len = 0;
+    uint32_t count = 0;
+    uint32_t ret = 0;
+    uint32_t spinner_count = 0;
+    uint32_t sa_len = 0;
+    struct sockaddr_in server = {0};
+    struct timespec start, stop;
+
+    printf("\nStarting test against %s on port %d \n",
+           inet_ntoa(((struct sockaddr_in *)info->ai_addr)->sin_addr), TEST_PORT);
+    if ((sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol)) == -1)
+    {
+        printf("Cannot create socket, err: %s\n", strerror(errno));
+        return;
+    }
+    server.sin_family = AF_INET;
+    server.sin_port = htons(TEST_PORT);
+    server.sin_addr.s_addr = INADDR_ANY;
+
+    for (len = 1; len < MAX_PACKET; len = 2 * len)
+    {
+        if (len > 65507)
+        {
+            len = 65507;
+        }
+        printf("  Sending packets, length:%d ... \t", len);
+        fflush(stdout);
+
+        memset(buffer, 0, sizeof(struct command_header));
+        ((struct command_header *) buffer)->mode = htonl(FLOOD_IN);
+        ((struct command_header *) buffer)->count = htonl(PACKET_COUNT);
+        if (sendto(sock, buffer, sizeof(struct command_header), 0,
+                   info->ai_addr, info->ai_addrlen) == -1)
+        {
+            printf("Cannot send data, err: %s\n", strerror(errno));
+            return;
+        }
+
+        memset(buffer, 0, sizeof(struct command_header));
+        clock_gettime(CLOCK_REALTIME, &start);
+        for (count = 0; count < PACKET_COUNT; count++)
+        {
+            if (sendto(sock, buffer, len, 0, info->ai_addr, info->ai_addrlen) == -1)
+            {
+                printf("Cannot send data, err: %s\n", strerror(errno));
+                return;
+            }
+            spinner_count++;
+            if (verbose)
+            {
+                spinner(&spinner_count);
+            }
+        }
+        ret = recvfrom(sock, buffer, sizeof(buffer),
+                       MSG_WAITALL, (struct sockaddr *) &server, &sa_len);
+        if (ret == sizeof(struct command_header))
+        {
+            if (ntohl(((struct command_header *) buffer)->mode) == FLOOD_IN &&
+                ntohl(((struct command_header *) buffer)->confirm) == CONFIRM)
+            {
+                clock_gettime(CLOCK_REALTIME, &stop);
+            }
+        }
+        printf("\b %s\n", bandwidth(start, stop, len));
+        printf("  Receiving packets, length:%d ... \t", len);
+        fflush(stdout);
+
+        memset(buffer, 0, sizeof(struct command_header));
+        ((struct command_header *) buffer)->mode = htonl(FLOOD_OUT);
+        ((struct command_header *) buffer)->count = htonl(PACKET_COUNT);
+        ((struct command_header *) buffer)->size = htonl(len);
         if (sendto(sock, buffer, sizeof(struct command_header), 0,
                    info->ai_addr, info->ai_addrlen) == -1)
         {
@@ -230,23 +352,16 @@ void do_client(struct addrinfo *info, uint32_t verbose, uint32_t flood)
         }
 
         clock_gettime(CLOCK_REALTIME, &start);
-        for (count = 0; count < PACKET_COUNT; count++)
+        while (1)
         {
-            buffer[0] = 0;
-            if (sendto(sock, buffer, len, 0, info->ai_addr, info->ai_addrlen) == -1)
+            ret = recvfrom(sock, buffer, sizeof(buffer),
+                           MSG_WAITALL, (struct sockaddr *) &server, &sa_len);
+            if (ret == sizeof(struct command_header))
             {
-                printf("Cannot send data, err: %s\n", strerror(errno));
-                return;
-            }
-            if (flood == 0)
-            {
-                fflush(stdout);
-                ret = recvfrom(sock, buffer, sizeof(buffer),
-                               MSG_WAITALL, (struct sockaddr *) &server, &sa_len);
-                if (ret != len)
+                if (ntohl(((struct command_header *) buffer)->mode) == FLOOD_OUT &&
+                    ntohl(((struct command_header *) buffer)->confirm) == CONFIRM)
                 {
-                    printf("length mismatch, sent %d -> received %d\n", len, ret);
-                    return;
+                    break;
                 }
             }
             spinner_count++;
@@ -255,23 +370,7 @@ void do_client(struct addrinfo *info, uint32_t verbose, uint32_t flood)
                 spinner(&spinner_count);
             }
         }
-        if (flood == 0)
-        {
-            clock_gettime(CLOCK_REALTIME, &stop);
-        }
-        else
-        {
-            ret = recvfrom(sock, buffer, sizeof(buffer),
-                           MSG_WAITALL, (struct sockaddr *) &server, &sa_len);
-            if (ret == sizeof(struct command_header))
-            {
-                if (ntohl(((struct command_header *) buffer)->mode) == FLOOD_IN &&
-                    ntohl(((struct command_header *) buffer)->confirm) == CONFIRM)
-                {
-                    clock_gettime(CLOCK_REALTIME, &stop);
-                }
-            }
-        }
+        clock_gettime(CLOCK_REALTIME, &stop);
         printf("\b %s\n", bandwidth(start, stop, len));
     }
 }
@@ -281,7 +380,6 @@ int main(int argc, char **argv)
     int i = 0;
     uint32_t mode = 0;
     uint32_t verbose = 0;
-    uint32_t flood = 0;
     char port[10];
     struct addrinfo hints = {0};
     struct addrinfo *info = NULL;
@@ -319,7 +417,10 @@ int main(int argc, char **argv)
         }
         if (strncmp(argv[i], "--flood", 7) == 0)
         {
-            flood = 1;
+            if (mode == 2)
+            {
+                mode = 3;
+            }
         }
     }
 
@@ -331,10 +432,13 @@ int main(int argc, char **argv)
     {
         do_server(verbose);
     }
+    else if (mode == 2)
+    {
+        do_client_pingpong(info, verbose);
+    }
     else
     {
-        do_client(info, verbose, flood);
+        do_client_flood(info, verbose);
     }
-
     return 0;
 }
