@@ -11,6 +11,8 @@
 
 #define TEST_PORT    5555
 #define MAX_PACKET   70000
+#define UDP_MTULEN   1472
+#define UDP_MAXLEN   65507
 #define PACKET_COUNT 1000
 #define PINGPONG     0xaa55a5a1
 #define FLOOD_IN     0xaa55a5a2
@@ -31,7 +33,7 @@ void usage(void)
 {
     printf("\nUsage:\n");
     printf("  jperf --server [-v]\n");
-    printf("  jperf --client <ip_address> [-v]\n\n");
+    printf("  jperf --client <ip_address> [--flood] [--over_mtu] [-v]\n\n");
 }
 
 void spinner(uint32_t *count)
@@ -203,7 +205,7 @@ char *bandwidth(struct timespec start, struct timespec stop, uint32_t len)
     return p_buf;
 }
 
-void do_client_pingpong(struct addrinfo *info, uint32_t verbose)
+void do_client_pingpong(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -227,10 +229,10 @@ void do_client_pingpong(struct addrinfo *info, uint32_t verbose)
 
     for (len = 1; len < MAX_PACKET; len = 2 * len)
     {
-        if (len > 65507)
-        {
-            len = 65507;
-        }
+	if (len > max_packet)
+	{
+	    len=max_packet;
+	}
         printf("  Sending packets, length:%d ... \t", len);
         fflush(stdout);
 
@@ -267,10 +269,15 @@ void do_client_pingpong(struct addrinfo *info, uint32_t verbose)
         }
         clock_gettime(CLOCK_REALTIME, &stop);
         printf("\b %s\n", bandwidth(start, stop, len));
+
+	if (len == max_packet)
+	{
+	    break;
+	}
     }
 }
 
-void do_client_forward_flood(struct addrinfo *info, uint32_t verbose)
+void do_client_forward_flood(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -294,9 +301,9 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t verbose)
 
     for (len = 1; len < MAX_PACKET; len = 2 * len)
     {
-        if (len > 65507)
+        if (len > max_packet)
         {
-            len = 65507;
+            len = max_packet;
         }
         printf("  Sending packets, length:%d ... \t", len);
         fflush(stdout);
@@ -337,10 +344,15 @@ void do_client_forward_flood(struct addrinfo *info, uint32_t verbose)
             }
         }
         printf("\b %s\n", bandwidth(start, stop, len));
+
+	if (len == max_packet)
+	{
+	    break;
+	}
     }
 }
 
-void do_client_reverse_flood(struct addrinfo *info, uint32_t verbose)
+void do_client_reverse_flood(struct addrinfo *info, uint32_t max_packet, uint32_t verbose)
 {
     int sock = 0;
     uint32_t len = 0;
@@ -363,9 +375,9 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t verbose)
 
     for (len = 1; len < MAX_PACKET; len = 2 * len)
     {
-        if (len > 65507)
+        if (len > max_packet)
         {
-            len = 65507;
+            len = max_packet;
         }
         printf("  Receiving packets, length:%d ... \t", len);
         fflush(stdout);
@@ -402,6 +414,11 @@ void do_client_reverse_flood(struct addrinfo *info, uint32_t verbose)
         }
         clock_gettime(CLOCK_REALTIME, &stop);
         printf("\b %s\n", bandwidth(start, stop, len));
+
+	if (len == max_packet)
+	{
+	    break;
+	}
     }
 }
 
@@ -409,6 +426,7 @@ int main(int argc, char **argv)
 {
     int i = 0;
     uint32_t mode = 0;
+    uint32_t max_packet = UDP_MTULEN;
     uint32_t verbose = 0;
     char port[10];
     struct addrinfo hints = {0};
@@ -452,6 +470,10 @@ int main(int argc, char **argv)
                 mode = 3;
             }
         }
+        if (strncmp(argv[i], "--over-mtu", 10) == 0)
+        {
+	    max_packet=UDP_MAXLEN;
+	}
     }
 
     if (mode == 0)
@@ -464,12 +486,12 @@ int main(int argc, char **argv)
     }
     else if (mode == 2)
     {
-        do_client_pingpong(info, verbose);
+        do_client_pingpong(info, max_packet, verbose);
     }
     else
     {
-        do_client_forward_flood(info, verbose);
-        do_client_reverse_flood(info, verbose);
+        do_client_forward_flood(info, max_packet, verbose);
+        do_client_reverse_flood(info, max_packet, verbose);
     }
     return 0;
 }
